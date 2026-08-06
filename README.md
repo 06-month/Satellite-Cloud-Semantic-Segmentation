@@ -1,309 +1,309 @@
-# Cloud Segmentation - CMX Model
+# Cloud Segmentation with CMX (RGB + NIR)
 
-CMX (Cross-Modal Fusion) 모델을 사용한 구름 세그멘테이션 프로젝트입니다.
+**Four-class cloud segmentation from paired RGB and near-infrared satellite imagery, built on the
+CMX cross-modal architecture.**
 
-**Kaggle Competition:** [Clouds Segmentation 2025](https://www.kaggle.com/competitions/clouds-segmentation-2025)
+Kaggle: [Clouds Segmentation 2025](https://www.kaggle.com/competitions/clouds-segmentation-2025)
+— *Clouds Semantic Segmentation, 2025 Fall, Hanbat National University.*
 
-## 📋 목차
+| My best submission | Private | Public |
+|---|---:|---:|
+| CMX (MiT-B2, RGB+NIR) | **0.78462** | **0.76443** |
 
-- [프로젝트 개요](#프로젝트-개요)
-- [주요 기능](#주요-기능)
-- [프로젝트 구조](#프로젝트-구조)
-- [설치 방법](#설치-방법)
-- [사용 방법](#사용-방법)
-- [모델 아키텍처](#모델-아키텍처)
-- [성능](#성능)
-- [참고 문헌](#참고-문헌)
+This was a team course project in which each member developed a separate model independently.
+**This repository is my model**, and the scores above are from my own submission.
 
-## 🎯 프로젝트 개요
+---
 
-이 프로젝트는 RGB 이미지와 NIR(Near-Infrared) 이미지를 활용하여 구름을 세그멘테이션하는 딥러닝 모델입니다. CMX(Cross-Modal Fusion) 아키텍처를 기반으로 하며, 다음과 같은 클래스를 예측합니다:
+## Task
 
-- **Class 0**: Background (배경)
-- **Class 1**: Thick Cloud (두꺼운 구름)
-- **Class 2**: Thin Cloud (얇은 구름)
-- **Class 3**: Cloud Shadow (구름 그림자)
+Each sample is a co-registered pair: an RGB image and a NIR (near-infrared) band. Every pixel is
+assigned one of four classes.
 
-## ✨ 주요 기능
+| Index | Class | Label colour (BGR) |
+|---:|---|---|
+| 0 | Background | `[0, 0, 0]` |
+| 1 | Thick cloud | `[0, 0, 255]` |
+| 2 | Thin cloud | `[0, 255, 0]` |
+| 3 | Cloud shadow | `[0, 255, 255]` |
 
-### 모델
-- **CMX (Cross-Modal Fusion)**: RGB-X 세그멘테이션을 위한 Cross-Modal 융합 아키텍처
-- **MiT Backbone**: Mix Transformer 백본 (B1, B2, B3, B4 variants)
-- **FRM & FFM**: Feature Rectify Module과 Feature Fusion Module
-- **Pretrained Weights**: HuggingFace SegFormer 사전학습 가중치 지원
+The hard classes are **thin cloud** and **cloud shadow**. In RGB alone, thin cloud blends into
+bright ground and shadow blends into dark ground. NIR separates them, because cloud and terrain
+reflect very differently outside the visible range — which is why this task is framed as
+cross-modal rather than plain RGB segmentation.
 
-### 데이터 증강
-- **Copy-Paste Augmentation**: 구름 인스턴스 복사-붙여넣기
-- **Geometric Transforms**: Crop, Flip, Rotation, ShiftScaleRotate
-- **Color Augmentation**: Brightness, Contrast, HSV, CLAHE
-- **Separate Normalization**: RGB와 NIR 채널 별도 정규화
+---
 
-### 학습 기법
-- **Gradient Accumulation**: 효과적인 배치 크기 증가
-- **Mixed Loss**: OHEM + Dice Loss 조합
-- **Learning Rate Scheduling**: Cosine Annealing / ReduceLROnPlateau
-- **Separated Learning Rate**: Backbone과 Head에 다른 학습률 적용
+## Why CMX
 
-## 📁 프로젝트 구조
+The simple option is to stack NIR as a fourth input channel. That forces one encoder to build a
+single representation for two physically different signals, and the NIR contribution is diluted at
+the first convolution.
+
+[CMX](https://github.com/huaaaliu/RGBX_Semantic_Segmentation) instead runs **two parallel MiT
+encoders** and exchanges information between them at every stage:
 
 ```
-.
-├── config.py              # 설정 파일
-├── train.py              # 학습 스크립트
-├── test.py               # 테스트 및 제출 스크립트
-├── requirements.txt      # 패키지 의존성
-├── models/               # 모델 관련 모듈
-│   ├── __init__.py
-│   ├── modules.py        # FRM, FFM 모듈
-│   ├── decoder.py        # MLP Decoder
-│   ├── backbone.py       # MiT Transformer Backbone
-│   └── cmx.py           # CMX 메인 모델
-├── data/                # 데이터 관련 모듈
-│   ├── __init__.py
-│   ├── augmentations.py # 데이터 증강
-│   └── dataset.py       # 데이터셋 클래스
-└── utils/               # 유틸리티 모듈
-    ├── __init__.py
-    ├── losses.py        # 손실 함수
-    ├── metrics.py       # 평가 메트릭
-    └── utils.py         # 기타 유틸리티
+RGB ──► MiT encoder ──┐
+                      ├─► FRM (rectify) ─► FFM (fuse) ─► stage output   × 4 stages
+NIR ──► MiT encoder ──┘
+                                            ↓
+                                    MLP decoder ─► 4-class logits
 ```
 
-## 🔧 설치 방법
+- **FRM (Feature Rectify Module)** — channel-wise and spatial-wise gating; each modality corrects
+  the other before fusion.
+- **FFM (Feature Fusion Module)** — cross-attention between the two streams, then channel embedding.
 
-### 1. 저장소 클론
+Both streams stay alive through all four stages instead of collapsing at the input.
 
-```bash
-git clone <repository-url>
-cd cloud-segmentation
+---
+
+## What This Repository Adapts
+
+CMX is designed for RGB-D and RGB-thermal indoor benchmarks. Moving it to satellite RGB+NIR
+required changes at the input, the pretraining, and the augmentation. The table separates upstream
+code from what was written for this task.
+
+| Component | Origin |
+|---|---|
+| `models/modules.py` — FRM, FFM, CrossAttention, CrossPath, ChannelEmbed | **Upstream CMX** |
+| `models/backbone.py` — `RGBXTransformer` dual-encoder, MiT blocks | **Upstream CMX** |
+| `models/decoder.py` — MLP decoder | **Upstream CMX (SegFormer-style)** |
+| `models/backbone.py` — `load_pretrained_from_transformers()` | Written here |
+| `models/cmx.py` — NIR channel adapter, model factory | Written here |
+| `data/augmentations.py` — cloud-instance Copy-Paste, 4-channel joint transform | Written here |
+| `data/dataset.py` — colour-mask decoding, in-RAM loading | Written here |
+| `utils/losses.py` — OHEM+Dice and the loss registry | Written here |
+| `train.py`, `test.py`, `config.py` | Written here |
+
+### Pretrained weights from HuggingFace instead of local checkpoints
+
+Upstream CMX expects MiT checkpoints (`mit_b2.pth`) downloaded from the authors' links. Those are
+awkward to obtain inside a Kaggle kernel, so the backbone loads
+[`nvidia/mit-b*`](https://huggingface.co/nvidia/mit-b2) through `transformers` and remaps the keys.
+
+Two mismatches had to be handled:
+
+1. **Naming.** HuggingFace SegFormer uses `patch_embeddings.{i}` / `block.{i}` / `attention.self.query`;
+   CMX uses `patch_embed{i+1}` / `block{i+1}` / `attn.q`.
+2. **Fused QKV.** HuggingFace stores `key` and `value` as separate tensors; CMX uses a single fused
+   `attn.kv`. The loader collects both and concatenates them.
+
+```python
+if 'attention.self.key' in k:
+    kv_weights.setdefault(base, {})['key'] = v      # collect
+...
+w = torch.cat([kv['key'], kv['value']], dim=0)      # fuse into attn.kv
 ```
 
-### 2. 가상환경 생성 (권장)
+Every loaded tensor is also **copied into the `extra_*` branch**, so the NIR encoder starts from
+the same ImageNet-pretrained weights as the RGB encoder rather than from random initialisation.
 
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 또는
-venv\Scripts\activate  # Windows
+### NIR is one channel, CMX expects three
+
+```python
+if nir.shape[1] == 1:
+    nir = nir.repeat(1, 3, 1, 1)
 ```
 
-### 3. 패키지 설치
+Replicating the band keeps the pretrained patch-embedding weights usable instead of reshaping the
+first convolution.
+
+### Copy-Paste for cloud instances
+
+Clouds are irregular blobs whose count varies wildly between scenes, so instance-level Copy-Paste
+is a natural augmentation — but it has to respect the modality pairing.
+
+- Connected components are extracted from the source mask (`cv2.connectedComponentsWithStats`),
+  and components under 100 px are skipped.
+- One component is chosen at random, rescaled by a factor in `[0.4, 1.2]`, and pasted at a random
+  position with boundary clamping.
+- **RGB, NIR and mask are pasted together in the same region.** A standard Copy-Paste moves only
+  RGB and the mask; here that would break RGB/NIR correspondence and feed the two encoders
+  contradictory evidence.
+
+### Geometric augmentation on a 4-channel stack
+
+RGB and NIR are concatenated into a single 4-channel array *before* the geometric transforms, then
+split back afterwards:
+
+```python
+combined = np.concatenate([rgb, nir], axis=-1)     # (H, W, 4)
+aug = self.geom(image=combined, mask=mask)         # flips/rotations/distortions stay aligned
+...
+rgb_t, nir_t = img4[:3], img4[3:4]
+```
+
+Normalisation uses ImageNet statistics for RGB and separate statistics for NIR
+(`mean=[0.485, 0.456, 0.406, 0.5]`, `std=[0.229, 0.224, 0.225, 0.25]`).
+
+---
+
+## Training Setup
+
+| | |
+|---|---|
+| Backbone | MiT-B2 (`mit_b1`–`mit_b4` selectable), 66.6 M parameters |
+| Input | 512×512 random crop |
+| Batch | 4, with **gradient accumulation ×4** → effective 16 |
+| Optimizer | AdamW, `weight_decay=2e-2` |
+| Learning rate | **backbone 3e-5, head/decoder 3e-4** (10× apart) |
+| Schedule | Cosine annealing, `eta_min=1e-6` |
+| Loss | `ohem+dice` = 0.7 · OHEM-CE (hardest 25 % of pixels) + 0.3 · Dice |
+| Split | 829 images → 663 train / 166 val (8:2) |
+| Hardware | Kaggle, **Tesla P100-PCIE-16GB** |
+
+**Why gradient accumulation.** Two full MiT encoders at 512×512 do not leave room for a useful
+batch size on a single 16 GB P100. Accumulating four steps of batch 4 buys the gradient statistics
+of batch 16 at the memory cost of batch 4.
+
+**Why split learning rates.** The backbone starts from ImageNet-pretrained weights while the
+decoder, FRM and FFM start from scratch. A single learning rate either destroys the pretrained
+features or leaves the new modules undertrained.
+
+**Why OHEM.** Background dominates the pixel distribution and thin cloud and shadow are the
+classes that actually decide the score, so cross-entropy is restricted to the hardest 25 % of
+pixels and paired with Dice for region-level overlap.
+
+---
+
+## Results
+
+**The submitted result came from an earlier version of this code.**
+
+| | Scored run | Current code in this repository |
+|---|---|---|
+| Loss | `dice+ce` (0.7 CE + 0.3 Dice) | `ohem+dice` |
+| OHEM | not implemented | implemented |
+| Epochs | 100 | 60 |
+| Copy-Paste scale | `[0.3, 1.0]`, no boundary clamp | `[0.4, 1.2]`, clamped |
+| Status | completed, submitted | **never run to completion** |
+
+Scored run, on the 166-image validation split:
+
+| Metric | Value |
+|---|---:|
+| Best val mIoU | **0.5287** (epoch 94) |
+| Val pixel accuracy | 0.8260 |
+| Runtime | ~6 min 33 s / epoch × 100 ≈ **10.9 hours** |
+
+Validation mIoU over training: 0.3678 (ep 4) → 0.4071 (ep 9) → 0.4427 (ep 19) → 0.4961 (ep 34)
+→ 0.5152 (ep 64) → 0.5237 (ep 79) → **0.5287 (ep 94)**. Gains after epoch 60 were small
+(+0.013 over the last 35 epochs).
+
+Kaggle score for that run: **Private 0.78462 / Public 0.76443**.
+
+OHEM, the wider Copy-Paste range and the boundary fix were added *after* that submission. They
+are in the code but **were never evaluated**, so no score is claimed for them.
+
+---
+
+## Setup
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 필수 패키지
-- PyTorch >= 2.0.0
-- torchvision >= 0.15.0
-- albumentations >= 1.3.0
-- timm >= 0.9.0
-- transformers >= 4.30.0
-- opencv-python >= 4.7.0
-- pandas, numpy, matplotlib, tqdm
+PyTorch ≥ 2.0, torchvision ≥ 0.15, albumentations ≥ 1.3, timm ≥ 0.9, transformers ≥ 4.30,
+opencv-python ≥ 4.7.
 
-## 🚀 사용 방법
+MiT weights download automatically from HuggingFace on first run.
 
-### 설정 변경
-
-`config.py` 파일에서 하이퍼파라미터를 수정할 수 있습니다:
-
-```python
-# Paths
-workspace_path = '/path/to/dataset'
-output_path = '/path/to/output'
-
-# Training
-batch_size = 4
-epochs = 60
-patch_size = 512
-
-# Model
-cmx_backbone = 'mit_b2'  # 'mit_b1', 'mit_b2', 'mit_b3', 'mit_b4'
-
-# Loss
-loss_func = 'ohem+dice'
-
-# Optimizer
-lr_head = 3e-4
-lr_backbone = 3e-5
-accumulation_steps = 4
-
-# Augmentation
-use_copy_paste = True
-```
-
-### 학습
-
-```bash
-# 기본 설정으로 학습
-python train.py
-
-# 커스텀 설정으로 학습
-python train.py \
-    --workspace /path/to/dataset \
-    --output /path/to/output \
-    --epochs 100 \
-    --batch_size 8 \
-    --backbone mit_b3 \
-    --seed 42
-```
-
-**학습 과정:**
-- 데이터 로딩 및 전처리
-- 모델 생성 및 사전학습 가중치 로드
-- Epoch마다 학습 및 검증
-- 5 에포크마다 검증 수행 및 시각화
-- Best 모델 자동 저장 (`ckpt/cmx_best.pt`)
-
-### 테스트 및 제출
-
-```bash
-# 기본 설정으로 테스트
-python test.py
-
-# 커스텀 checkpoint 사용
-python test.py \
-    --workspace /path/to/dataset \
-    --output /path/to/output \
-    --checkpoint /path/to/checkpoint.pt \
-    --backbone mit_b2
-```
-
-**출력:**
-- 예측 결과 이미지: `output/results/`
-- 제출 파일: `output/submission.csv`
-
-## 🏗️ 모델 아키텍처
-
-### CMX (Cross-Modal Fusion)
-
-CMX는 RGB와 NIR 두 가지 모달리티를 효과적으로 융합하는 아키텍처입니다.
+### Data layout
 
 ```
-Input: RGB (3 channels) + NIR (1 channel)
-   ↓
-[Dual MiT Encoders]
-   ├─ RGB Encoder (MiT-B2)
-   └─ NIR Encoder (MiT-B2)
-   ↓
-[4-Stage Feature Extraction]
-   └─ Each stage:
-      ├─ Patch Embedding
-      ├─ Transformer Blocks
-      ├─ FRM (Feature Rectify Module)
-      └─ FFM (Feature Fusion Module)
-   ↓
-[MLP Decoder]
-   └─ Multi-scale feature fusion
-   ↓
-Output: Segmentation Map (4 classes)
-```
-
-### 주요 컴포넌트
-
-1. **MiT Backbone**: Hierarchical Vision Transformer
-   - 4단계 피라미드 구조
-   - Efficient Self-Attention with Spatial Reduction
-   - Overlapping Patch Merging
-
-2. **FRM (Feature Rectify Module)**
-   - Channel-wise attention
-   - Spatial-wise attention
-   - Cross-modal feature refinement
-
-3. **FFM (Feature Fusion Module)**
-   - Cross-path attention
-   - Channel embedding
-   - Dual-stream feature fusion
-
-4. **MLP Decoder**
-   - Multi-scale feature aggregation
-   - Lightweight head design
-
-### Backbone Variants
-
-| Model | Params | Depths | Embed Dims | Heads |
-|-------|--------|--------|------------|-------|
-| MiT-B1 | ~13M | [2,2,2,2] | [64,128,320,512] | [1,2,5,8] |
-| MiT-B2 | ~25M | [3,4,6,3] | [64,128,320,512] | [1,2,5,8] |
-| MiT-B3 | ~45M | [3,4,18,3] | [64,128,320,512] | [1,2,5,8] |
-| MiT-B4 | ~62M | [3,8,27,3] | [64,128,320,512] | [1,2,5,8] |
-
-## 📊 성능
-
-### 학습 환경
-- GPU: NVIDIA GTX 1080 Ti
-- Batch Size: 4 (Effective: 16 with gradient accumulation)
-- Epochs: 60
-- Training Time: ~11 hours
-
-### 평가 메트릭
-- **mIOU**: Mean Intersection over Union
-- **Pixel Accuracy**: Pixel-wise classification accuracy
-- **Dice Score**: F1 score for segmentation
-
-### 시각화
-
-학습 중 검증 샘플이 자동으로 시각화되어 `ckpt/visuals/`에 저장됩니다:
-- RGB 입력
-- NIR 입력
-- 예측 마스크
-- Ground Truth 마스크
-
-## 🛠️ 고급 사용법
-
-### 커스텀 데이터셋
-
-데이터셋 구조:
-```
-dataset/
+<workspace>/
 ├── train/
-│   ├── rgb/        # RGB 이미지
-│   ├── ngr/        # NIR 이미지 (채널 2에 NIR 데이터)
-│   └── label/      # 라벨 이미지 (BGR 컬러)
+│   ├── rgb/      # RGB images
+│   ├── ngr/      # NIR in channel 2 (BGR index 2)
+│   └── label/    # colour-coded masks
 └── test/
     ├── rgb/
     └── ngr/
 ```
 
-라벨 색상 매핑:
-- Background: `[0, 0, 0]` (Black)
-- Thick Cloud: `[0, 0, 255]` (Red in BGR)
-- Thin Cloud: `[0, 255, 0]` (Green in BGR)
-- Cloud Shadow: `[0, 255, 255]` (Yellow in BGR)
+Paths are set in `config.py` (`workspace_path`, `output_path`); the defaults are the Kaggle
+input/working directories.
 
-### 손실 함수 커스터마이징
+---
 
-`utils/losses.py`에서 새로운 손실 함수를 추가할 수 있습니다:
+## Usage
 
-```python
-def custom_loss(preds, targets):
-    # Your custom loss implementation
-    return loss_value
+```bash
+# Train
+python train.py
+python train.py --workspace /path/to/data --output /path/to/out \
+                --epochs 100 --batch_size 8 --backbone mit_b3 --seed 42
 
-# config.py에서 사용
-loss_func = 'custom'
+# Predict and build submission.csv
+python test.py --checkpoint ckpt/cmx_best.pt --backbone mit_b2
 ```
 
-### 증강 기법 추가
+Validation runs every 5 epochs, writes RGB / NIR / prediction / ground-truth panels to
+`ckpt/visuals/`, and keeps the best-mIoU checkpoint at `ckpt/cmx_best.pt`.
 
-`data/augmentations.py`에서 증강 파이프라인을 수정할 수 있습니다.
+`CloudSeg.ipynb` is the single-file Kaggle version of the same pipeline — the modules under
+`models/`, `data/` and `utils/` inlined into one notebook. It matches the current code, not the
+scored run.
 
-## 📝 참고 문헌
+---
 
-### CMX Model
+## Limitations
+
+- **The code in this repository has no measured result.** The reported scores belong to an earlier
+  version; the current configuration was never trained to completion.
+- **No experiment tracking.** There is no wandb/TensorBoard integration, so per-epoch history
+  survives only in notebook output. Comparisons between configurations were never recorded, and
+  the effect of OHEM, of the Copy-Paste range, and of the split learning rates is therefore
+  unmeasured.
+- **The train/validation split is sequential, not random.** `rgb_images[:split]` slices a
+  filename-sorted list, so if the files are ordered by scene or acquisition the two sets are not
+  identically distributed.
+- **The whole dataset is loaded into RAM** in `CloudDataset.__init__`. Fine for 829 images, not for
+  a larger set.
+- **No test-time augmentation.** Predictions are single forward passes at full resolution.
+- Single seed (0); no variance reported.
+- An earlier submission scored 0.00000, i.e. the RLE encoding produced empty masks before it was
+  corrected.
+
+---
+
+## Repository Structure
+
 ```
+.
+├── config.py                 # all hyperparameters
+├── train.py                  # training loop, gradient accumulation, validation, visualisation
+├── test.py                   # inference + RLE submission
+├── CloudSeg.ipynb            # single-file Kaggle version
+├── models/
+│   ├── cmx.py                # model assembly, NIR channel adapter
+│   ├── backbone.py           # dual MiT encoder + HuggingFace weight loader
+│   ├── modules.py            # FRM / FFM (upstream CMX)
+│   └── decoder.py            # MLP decoder
+├── data/
+│   ├── dataset.py            # colour-mask decoding, RGB/NIR pairing
+│   └── augmentations.py      # Copy-Paste, 4-channel geometric transforms
+├── utils/
+│   ├── losses.py             # OHEM-CE, Dice, Jaccard, combinations
+│   ├── metrics.py            # mIoU, pixel accuracy, Dice
+│   └── utils.py
+└── requirements.txt
+```
+
+---
+
+## References
+
+```bibtex
 @article{zhang2023cmx,
   title={CMX: Cross-Modal Fusion for RGB-X Semantic Segmentation with Transformers},
   author={Zhang, Jiaming and Liu, Huayao and Yang, Kailun and Hu, Xinxin and Liu, Ruiping and Stiefelhagen, Rainer},
   journal={arXiv preprint arXiv:2203.04838},
   year={2023}
 }
-```
 
-### SegFormer (MiT Backbone)
-```
 @inproceedings{xie2021segformer,
   title={SegFormer: Simple and Efficient Design for Semantic Segmentation with Transformers},
   author={Xie, Enze and Wang, Wenhai and Yu, Zhiding and Anandkumar, Anima and Alvarez, Jose M and Luo, Ping},
@@ -312,21 +312,7 @@ loss_func = 'custom'
 }
 ```
 
-## 🤝 기여
-
-버그 리포트, 기능 요청, Pull Request는 언제나 환영합니다!
-
-## 📄 라이센스
-
-이 프로젝트는 MIT 라이센스를 따릅니다.
-
-## 🔗 링크
-
-- **Kaggle Competition**: [Clouds Segmentation 2025](https://www.kaggle.com/competitions/clouds-segmentation-2025)
-- **CMX Paper**: [arXiv:2203.04838](https://arxiv.org/abs/2203.04838)
-- **SegFormer**: [Hugging Face](https://huggingface.co/docs/transformers/model_doc/segformer)
-
----
-
-**Happy Cloud Segmentation! ☁️**
-
+The CMX architecture code is based on the official implementation at
+[huaaaliu/RGBX_Semantic_Segmentation](https://github.com/huaaaliu/RGBX_Semantic_Segmentation).
+MiT backbone weights come from the [NVIDIA SegFormer](https://huggingface.co/nvidia/mit-b2)
+release on HuggingFace.
