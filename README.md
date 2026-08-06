@@ -27,21 +27,11 @@ assigned one of four classes.
 | 2 | Thin cloud | `[0, 255, 0]` |
 | 3 | Cloud shadow | `[0, 255, 255]` |
 
-The hard classes are **thin cloud** and **cloud shadow**. In RGB alone, thin cloud blends into
-bright ground and shadow blends into dark ground. NIR separates them, because cloud and terrain
-reflect very differently outside the visible range — which is why this task is framed as
-cross-modal rather than plain RGB segmentation.
-
 ---
 
-## Why CMX
+## Architecture
 
-The simple option is to stack NIR as a fourth input channel. That forces one encoder to build a
-single representation for two physically different signals, and the NIR contribution is diluted at
-the first convolution.
-
-[CMX](https://github.com/huaaaliu/RGBX_Semantic_Segmentation) instead runs **two parallel MiT
-encoders** and exchanges information between them at every stage:
+[CMX](https://github.com/huaaaliu/RGBX_Semantic_Segmentation) runs **two parallel MiT encoders** and exchanges information between them at every stage:
 
 ```
 RGB ──► MiT encoder ──┐
@@ -55,7 +45,6 @@ NIR ──► MiT encoder ──┘
   the other before fusion.
 - **FFM (Feature Fusion Module)** — cross-attention between the two streams, then channel embedding.
 
-Both streams stay alive through all four stages instead of collapsing at the input.
 
 ---
 
@@ -107,25 +96,19 @@ if nir.shape[1] == 1:
     nir = nir.repeat(1, 3, 1, 1)
 ```
 
-Replicating the band keeps the pretrained patch-embedding weights usable instead of reshaping the
-first convolution.
+The band is replicated so the second encoder receives the 3-channel input it expects.
 
 ### Copy-Paste for cloud instances
-
-Clouds are irregular blobs whose count varies wildly between scenes, so instance-level Copy-Paste
-is a natural augmentation — but it has to respect the modality pairing.
 
 - Connected components are extracted from the source mask (`cv2.connectedComponentsWithStats`),
   and components under 100 px are skipped.
 - One component is chosen at random, rescaled by a factor in `[0.4, 1.2]`, and pasted at a random
   position with boundary clamping.
-- **RGB, NIR and mask are pasted together in the same region.** A standard Copy-Paste moves only
-  RGB and the mask; here that would break RGB/NIR correspondence and feed the two encoders
-  contradictory evidence.
+- **RGB, NIR and mask are pasted together in the same region.**
 
 ### Geometric augmentation on a 4-channel stack
 
-RGB and NIR are concatenated into a single 4-channel array *before* the geometric transforms, then
+RGB and NIR are concatenated into a single 4-channel array before the geometric transforms, then
 split back afterwards:
 
 ```python
@@ -153,18 +136,6 @@ Normalisation uses ImageNet statistics for RGB and separate statistics for NIR
 | Loss | `ohem+dice` = 0.7 · OHEM-CE (hardest 25 % of pixels) + 0.3 · Dice |
 | Split | 829 images → 663 train / 166 val (8:2) |
 | Hardware | Kaggle, **Tesla P100-PCIE-16GB** |
-
-**Why gradient accumulation.** Two full MiT encoders at 512×512 do not leave room for a useful
-batch size on a single 16 GB P100. Accumulating four steps of batch 4 buys the gradient statistics
-of batch 16 at the memory cost of batch 4.
-
-**Why split learning rates.** The backbone starts from ImageNet-pretrained weights while the
-decoder, FRM and FFM start from scratch. A single learning rate either destroys the pretrained
-features or leaves the new modules undertrained.
-
-**Why OHEM.** Background dominates the pixel distribution and thin cloud and shadow are the
-classes that actually decide the score, so cross-entropy is restricted to the hardest 25 % of
-pixels and paired with Dice for region-level overlap.
 
 ---
 
@@ -253,19 +224,8 @@ scored run.
 
 - **The code in this repository has no measured result.** The reported scores belong to an earlier
   version; the current configuration was never trained to completion.
-- **No experiment tracking.** There is no wandb/TensorBoard integration, so per-epoch history
-  survives only in notebook output. Comparisons between configurations were never recorded, and
-  the effect of OHEM, of the Copy-Paste range, and of the split learning rates is therefore
-  unmeasured.
-- **The train/validation split is sequential, not random.** `rgb_images[:split]` slices a
-  filename-sorted list, so if the files are ordered by scene or acquisition the two sets are not
-  identically distributed.
-- **The whole dataset is loaded into RAM** in `CloudDataset.__init__`. Fine for 829 images, not for
-  a larger set.
-- **No test-time augmentation.** Predictions are single forward passes at full resolution.
-- Single seed (0); no variance reported.
-- An earlier submission scored 0.00000, i.e. the RLE encoding produced empty masks before it was
-  corrected.
+- **No experiment tracking**, so the effect of OHEM, of the Copy-Paste range, and of the split
+  learning rates was never measured.
 
 ---
 
