@@ -68,9 +68,9 @@ code from what was written for this task.
 
 ### Pretrained weights from HuggingFace instead of local checkpoints
 
-Upstream CMX expects MiT checkpoints (`mit_b2.pth`) downloaded from the authors' links. Those are
-awkward to obtain inside a Kaggle kernel, so the backbone loads
-[`nvidia/mit-b*`](https://huggingface.co/nvidia/mit-b2) through `transformers` and remaps the keys.
+Upstream CMX expects MiT checkpoints (`mit_b2.pth`) downloaded from the authors' links. Here the
+backbone instead loads [`nvidia/mit-b*`](https://huggingface.co/nvidia/mit-b2) through
+`transformers` and remaps the keys.
 
 Two mismatches had to be handled:
 
