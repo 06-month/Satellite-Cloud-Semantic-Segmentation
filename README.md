@@ -1,7 +1,9 @@
-# CMX 기반 구름 분할 (RGB + NIR)
+# CMX 기반 Cloud Semantic Segmentation (RGB + NIR)
 
-**RGB와 근적외선(NIR) 위성 영상 쌍으로부터 구름을 4개 class로 분할한다. CMX cross-modal architecture
-위에 구현했다.**
+**본 프로젝트는 3학년 2학기 컴퓨터 비전의 기말 팀 프로젝트로, 해당 레포지토리의 영역은 본인이 설계한 모델이다.**
+
+RGB와 근적외선(NIR) 위성 영상 쌍으로부터 구름을 4개 class로 분할한다. CMX cross-modal architecture
+위에 구현했다.
 
 Kaggle: [Clouds Segmentation 2025](https://www.kaggle.com/competitions/clouds-segmentation-2025)
 — *Clouds Semantic Segmentation, 2025 가을학기, 한밭대학교.*
@@ -164,8 +166,7 @@ rgb_t, nir_t = img4[:3], img4[3:4]
 
 해당 실행의 Kaggle 점수: **Private 0.78462 / Public 0.76443**.
 
-OHEM, 확장된 Copy-Paste 범위, 경계 처리 수정은 모두 그 제출 *이후*에 추가했다. 코드에는 들어 있지만
-**평가한 적이 없으므로** 이에 대한 점수는 주장하지 않는다.
+OHEM, 확장된 Copy-Paste 범위, 경계 처리 수정은 모두 그 제출 *이후*에 추가했다.
 
 ---
 
@@ -222,7 +223,7 @@ mIoU가 가장 높은 checkpoint를 `ckpt/cmx_best.pt`에 유지한다.
 
 - **이 저장소의 코드에는 측정된 결과가 없다.** 보고한 점수는 이전 버전의 것이고, 현재 설정은 끝까지
   학습한 적이 없다.
-- **실험 추적을 하지 않았다.** 그래서 OHEM, Copy-Paste 범위, encoder/decoder를 분리한 learning rate의
+- **정확한 변인 통제 실험이 이루어지지 않았다.** 그래서 OHEM, Copy-Paste 범위, encoder/decoder를 분리한 learning rate의
   효과를 각각 측정하지 못했다.
 
 ---
