@@ -1,6 +1,6 @@
 # CMX 기반 Cloud Semantic Segmentation (RGB + NIR)
 
-**본 프로젝트는 3학년 2학기 컴퓨터 비전의 기말 팀 프로젝트로, 해당 레포지토리의 영역은 본인이 설계한 모델이다.**
+**본 프로젝트는 3학년 2학기 컴퓨터 비전 수업의 기말 팀 프로젝트다.**
 
 RGB와 근적외선(NIR) 위성 영상 쌍으로부터 구름을 4개 class로 분할한다. CMX cross-modal architecture
 위에 구현했다.
